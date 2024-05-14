@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "mca tubes"
+version = "0.1.0"
+description = ""
+authors = ["Debin <99970804+DebinAl@users.noreply.github.com>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.10"
+mysql-connector-python = "^8.4.0"
+pymemcache = "^4.0.0"
+pandas = "^2.2.2"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
