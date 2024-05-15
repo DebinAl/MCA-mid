@@ -1,21 +1,59 @@
 import time
 import string
 import random
+import json
 import pandas
 import mysql.connector as database
-# Connect to the MySQL database
+from pymemcache.client import base
 
+# memchached
+mc = base.Client(('localhost','11211'))
+
+# Connect to the MySQL database
 try:
     db = database.connect(
-        host="localhost",
-        user="root",
-        password="",
-        database="mca_tubes"
+        host="34.30.23.118",
+        user="andika",
+        password="andikawira01",
+        database="model_database_debin"
 )
 except Exception as e:
     print(f"There's an error when connecting to Database: {e}")
 
 cursor = db.cursor()
+
+def db_init():
+    cursor.execute(
+"""
+create table if not exists tb_mahasiswa
+(
+	id_mahasiswa int auto_increment primary key,
+	nim_mahasiswa varchar(12),
+	nama_mahasiswa varchar(20)
+);
+""")
+    cursor.execute(
+        """
+create table if not exists tb_matakuliah
+(
+	id_matakuliah int auto_increment primary key,
+	nama_matakuliah varchar(20),
+	deskripsi text
+);
+        """
+    )
+    cursor.execute(
+        """
+create table if not exists tb_krs
+(
+	id_krs int auto_increment primary key,
+	id_mahasiswa int,
+	id_matakuliah int,
+	foreign key (id_mahasiswa) references tb_mahasiswa(id_mahasiswa),
+	foreign key (id_matakuliah) references tb_matakuliah(id_matakuliah)
+);
+        """
+    )
 
 # CRUD
 # CREATE
@@ -40,7 +78,7 @@ def insert_krs(id_mahasiswa: str, id_matakuliah: str) -> None:
 
 # READ
 
-def read_mahasiswa(limit: int = None) -> None:
+def read_mahasiswa(limit: int = None) -> list:
     if limit == None:
         sql = "SELECT * FROM tb_mahasiswa"
         start = time.time()
@@ -53,13 +91,30 @@ def read_mahasiswa(limit: int = None) -> None:
         
     result = cursor.fetchall()
     end = time.time()
-    print(f"Time taken: {end - start:.6f} seconds")
+    print(f"Read From DB: {end - start:.6f} seconds")
     
     df = pandas.DataFrame(columns=["id_mahasiswa", "nim_mahasiswa", "nama_mahasiswa"], data=result)
     try:
         df.to_csv("./out/data/mahasiswa.csv")
     except Exception as e:
         print(f"failed at exporting file: {e}")
+    
+    return result
+
+def read_mahasiswa_nim(nim: str):
+    sql = "SELECT * FROM tb_mahasiswa where `nim_mahasiswa` = %s LIMIT 1" % str(nim)
+    cursor.execute(sql)
+    result = cursor.fetchall()
+    return result
+
+    # TODO
+def read_mahasiswa_nim_v2(nim: str):
+    if not mc.get("read_%s" % str(nim)):
+        sql = "SELECT * FROM tb_mahasiswa where `nim_mahasiswa` = %s LIMIT 1" % str(nim)
+        cursor.execute(sql)
+        result = cursor.fetchall()
+        mc.set("read_%s" % str(nim), json.dump(result))
+        return result
 
 def read_matakuliah(limit: int = None) -> None:
     if limit == None:
@@ -117,9 +172,11 @@ def update_krs(id_mahasiswa: str, id_matakuliah: str, id_krs: str) -> None:
 
 # DELETE
 def delete_mahasiswa(id: str) -> None:
+    cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
     sql = "DELETE FROM tb_mahasiswa WHERE id_mahasiswa = %s"
     values = (id,)
     cursor.execute(sql, values)
+    cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
     db.commit()
 
 def delete_matakuliah(id: str) -> None:
@@ -135,16 +192,20 @@ def delete_krs(id: str) -> None:
     db.commit()
 
 def reset_db() -> None:
-    sql1 = "ALTER TABLE tb_mahasiswa AUTO_INCREMENT = 1"
-    sql2 = "ALTER TABLE tb_matakuliah AUTO_INCREMENT = 1"
-    sql3 = "ALTER TABLE tb_krs AUTO_INCREMENT = 1"
+    cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+    cursor.execute("TRUNCATE TABLE tb_krs")
+    cursor.execute("TRUNCATE TABLE tb_mahasiswa")
+    cursor.execute("TRUNCATE TABLE tb_matakuliah")
+    cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
     
-    cursor.execute(sql1)
-    cursor.execute(sql2)
-    cursor.execute(sql3)
+    cursor.execute("ALTER TABLE tb_mahasiswa AUTO_INCREMENT = 1")
+    cursor.execute("ALTER TABLE tb_matakuliah AUTO_INCREMENT = 1")
+    cursor.execute("ALTER TABLE tb_krs AUTO_INCREMENT = 1")
+
+    print("Resetted!")
     db.commit()
 
-def generate_nim() -> None:
+def generate_nim():
     return str(random.randint(100, 999)) + str(random.randint(100, 999)) + str(random.randint(100, 999))
 
 def convert_nim(nim):
@@ -155,36 +216,70 @@ def convert_nim(nim):
     return result
 
 def generate_sentence(num_words: int) -> str:
-    words = [''.join(random.choices(string.ascii_letters, k=random.randint(3, 10))) for _ in range(num_words)]
+    words = [''.join(random.choices(string.ascii_letters, k=5)) for _ in range(num_words)]
     return ' '.join(words).capitalize() + '.'
 
+def scenario():
+    amount = 20
+    amount_matkul = 5
+    krs_per_person = 5
 
+    # insert mahasiswa
+    start = time.time()
+    for i in range(amount):
+        nim = generate_nim()
+        insert_mahasiswa(nim, convert_nim(nim))
+    end = time.time()
+    print(f"Insert mahasiswa ({amount}): {end - start:.6f} seconds")
 
-def main() -> None:
-    # # delete 1000
+    # insert matakuliah
+    start = time.time()
+    for i in range(amount_matkul):
+        insert_matakuliah(generate_sentence(2), generate_sentence(5))
+    end = time.time()
+    print(f"Insert matakuliah ({amount_matkul}): {end - start:.6f} seconds")
+
+    # insert krs
+    start = time.time()
+    for i in range(amount):
+        for j in range(krs_per_person):
+            id_matkul = random.randint(1, amount_matkul)
+            insert_krs(i+1, id_matkul)
+    end = time.time()
+    print(f"Insert krs ({amount*krs_per_person}): {end - start:.6f} seconds")
+
+    result = read_mahasiswa()
+
+    # read nim v1
+    start = time.time()
+    for data in result:
+        read_mahasiswa_nim(data[1])
+    end = time.time()
+    print(f"Read mahasiswa ({len(result)}) v1: {end - start:.6f} seconds")
+
+    # read nim v2
+    # start = time.time()
+    # for data in result:
+    #     read_mahasiswa_nim_v2(data[1])
+    # end = time.time()
+    # print(f"Read {len(result)} row (v2): {end - start:.6f} seconds")
+
+    # delete
     # for i in range(2000):
     #     delete_mahasiswa(i+1)
     # for i in range(10):
     #     delete_krs(i+1)
-
-    #insert mahasiswa
-    # for i in range(1000):
-    #     nim = generate_nim()
-    #     insert_mahasiswa(nim, convert_nim(nim))
-
-    # insert matakuliah
-    # for i in range(750):
-    #     insert_matakuliah(generate_sentence(2), generate_sentence(5))
     
-    # insert krs
-    # for i in range(1000):
-    #     for amount in range(5):
-    #         id_matkul = random.randint(1, 750)
-    #         insert_krs(i+1, id_matkul)
+    start = time.time()
+    for id in result:
+        delete_mahasiswa(id[0])
+    end = time.time()
+    print(f"delete mahasiswa ({len(result)}): {end - start:.6f} seconds")
+    
+    reset_db()
 
-    read_mahasiswa()
-
-
+def main() -> None:
+    scenario()
     # reset_db()
 
 if __name__ == "__main__":
